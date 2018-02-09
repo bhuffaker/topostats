@@ -1,0 +1,142 @@
+dnl 
+dnl COPYRIGHT NOTICE HERE
+dnl
+
+dnl Process this file with autoconf to produce a configure script.
+
+AC_REVISION([$Id: ])
+
+AC_INIT(betweenness.c) dnl Any unique file in this directory will do
+AC_PREREQ(2.53)
+
+dnl options
+
+AC_ARG_WITH(incdirs,
+    [  --with-incdirs=DIRS     search for include files in DIRS])
+AC_ARG_WITH(libdirs,
+    [  --with-libdirs=DIRS     search for libraries in DIRS])
+AC_ARG_WITH(inclibdirs,
+    [  --with-inclibdirs=DIRS  same as --with-incdirs=DIRS --with-libdirs=DIRS])
+AC_ARG_WITH(inclibprefix,
+    [  --with-inclibprefix=DIR same as --with-incdirs=DIR/include --with-libdirs=DIR/lib])
+AC_ARG_WITH(incdir) dnl because I never remember if it's singular or plural
+AC_ARG_WITH(libdir) dnl because I never remember if it's singular or plural
+AC_ARG_WITH(inclibdir) dnl because I never remember if it's singular or plural
+# for development use
+
+# Using "include" in Makefiles is not portable.  Even if it's supported, it
+# may interpret relative directories differently.  So instead of having
+# Makefiles use include, we concatenate the would-be include files onto
+# every Makefile that needs them.
+
+
+dnl builtin(include, caida-config/caida.m4)      dnl
+dnl AC_CONFIG_HEADER(config.h)
+dnl AC_PREFIX_DEFAULT(/usr/local)
+
+
+dnl Checks for programs.
+
+AC_PROG_CC
+AC_PROG_CXX
+dnl AC_PROG_INSTALL
+dnl AC_PROG_RANLIB
+
+dnl CRL_DIRS(src, dst[, prefix[, suffix]])
+AC_DEFUN(CRL_DIRS, [
+    if test "${$1}" != "no" && test "${$1}" != ""; then
+	for dir in ${$1}; do
+	    $2="${$2} $3${dir}$4"
+	done
+    fi
+])
+
+CRL_DIRS(with_incdirs, CPPFLAGS, -I)
+CRL_DIRS(with_incdir, CPPFLAGS, -I)
+CRL_DIRS(with_inclibdirs, CPPFLAGS, -I)
+CRL_DIRS(with_inclibdir, CPPFLAGS, -I)
+CRL_DIRS(with_inclibprefix, CPPFLAGS, -I, /include)
+
+LIBDIRS="-L/opt/local/lib -L/usr/local/lib"
+CRL_DIRS(with_libdirs, LIBDIRS, -L)
+CRL_DIRS(with_libdir, LIBDIRS, -L)
+CRL_DIRS(with_inclibdirs, LIBDIRS, -L)
+CRL_DIRS(with_inclibdir, LIBDIRS, -L)
+CRL_DIRS(with_inclibprefix, LIBDIRS, -L, /lib)
+
+dnl Must append LIBDIRS to LDFLAGS now so it's present for AC_CHECK_LIB.
+dnl (LIBDIRS will not work in the OTHER-LIBRARIES argument of AC_CHECK_LIB
+dnl on all platforms since it will _follow_ the -l option for the library
+dnl being tested.)
+LDFLAGS="$LDFLAGS $LIBDIRS"
+
+
+
+AC_SEARCH_LIBS(JudyLCount, Judy, ,
+    AC_MSG_ERROR([required library not found]))
+AC_SEARCH_LIBS(gsl_fit_linear, gsl, LIBS="$LIBS -lgslcblas -lm",
+    AC_MSG_WARN([required library not found]), -lgslcblas)
+
+
+
+dnl CRL_SEARCH_INCLUDE_DIRS(HEADER, DIRECTORIES [, ACTION-IF-FOUND
+dnl     [, ACTION-IF-NOT-FOUND]])
+dnl Searches for HEADER with the default CPPFLAGS, and then with
+dnl -I'DIRECTORY' appended to CPPFLAGS for each word in DIRECTORIES in turn.
+dnl If the header is found, it defines SYMBOL, appends the required
+dnl -I'DIRECTORY' to CPPFLAGS, and executes ACTION-IF-FOUND; otherwise,
+dnl it executes ACTION-IF-NOT-FOUND and leaves CPPFLAGS untouched.
+AC_DEFUN(CRL_SEARCH_INCLUDE_DIRS, [
+    changequote(, )dnl
+    define([ac_tr_hdr], translit($1, [abcdefghijklmnopqrstuvwxyz./-%], [ABCDEFGHIJKLMNOPQRSTUVWXYZ___%]))
+    changequote([, ])dnl
+    AC_MSG_CHECKING([for $1])
+    AC_CACHE_VAL([coralreef_cv_header_dir_]ac_tr_hdr, [
+	coralreef_cv_header_dir_[]ac_tr_hdr="no"
+	ac_found=""
+	ac_old_cppflags="$CPPFLAGS"
+	for ac_dir in "" $2; do
+	    if test -n "$ac_dir"; then
+		CPPFLAGS="$CPPFLAGS -I$ac_dir"
+	    fi
+	    AC_TRY_CPP([#include <$1>], ac_found=1)
+	    CPPFLAGS="$ac_old_cppflags"
+	    if test -n "$ac_found"; then break; fi
+	done
+	if test -n "$ac_found"; then
+	    coralreef_cv_header_dir_[]ac_tr_hdr="${ac_dir:-yes}"
+	fi
+    ])
+    AC_MSG_RESULT([$coralreef_cv_header_dir_]ac_tr_hdr)
+    if test "$coralreef_cv_header_dir_[]ac_tr_hdr" = "no"; then
+	# not found
+	$4
+    else
+	if test "$coralreef_cv_header_dir_[]ac_tr_hdr" = "yes"; then
+	    ac_dir=""
+	else
+	    ac_dir="$coralreef_cv_header_dir_[]ac_tr_hdr"
+	    CPPFLAGS="$CPPFLAGS -I$ac_dir"
+	fi
+	AC_DEFINE_UNQUOTED(ac_tr_hdr, [1${ac_dir:+  /* in $ac_dir */}])
+	$3
+    fi
+])
+
+
+AC_HEADER_STDC
+
+AC_CHECK_HEADERS(unistd.h Judy.h)
+
+CRL_SEARCH_INCLUDE_DIRS(gsl/gsl_fit.h, /opt/local/include /usr/local/include, ,
+    AC_MSG_ERROR([required gsl headers not found.])
+)
+
+
+AC_C_BIGENDIAN
+dnl CAIDA_TYPES()
+
+AC_OUTPUT(Makefile)
+
+AC_MSG_RESULT([])
+AC_MSG_RESULT([Configuration complete.])

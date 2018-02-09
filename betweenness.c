@@ -32,6 +32,9 @@
 #include <math.h>
 #include <Judy.h>
 
+#define false 0
+#define true 1
+
 /*
 ** Whether to normalize betweenness in the old way, by dividing by n(n-1)
 ** instead of (n-1)(n-2)/2.  The factor n(n-1) was used in "Lessons from
@@ -60,6 +63,7 @@ Pvoid_t distances = (Pvoid_t)NULL;
 ** indexes in {nodes} may be sparse.
 */
 Pvoid_t node_index = (Pvoid_t)NULL;
+Pvoid_t index_node = (Pvoid_t)NULL;
 double *delta = NULL;       /* delta[t]: dependency of s on t */
 double *node_centrality = NULL; /* C_B[v]: betweenness centrality for node v */
 
@@ -115,6 +119,9 @@ unsigned long links_array_size;
 void load_graph(void);
 void dump_graph(void);
 void dump_links(Word_t i, Word_t li);
+void dump_nodes_betweenness(char * filename);
+void dump_links_betweenness(char * filename);
+void dump_links_betweenness_helper(FILE * fp, Word_t i, Word_t li);
 void compute_brandes_betweenness_centrality(void);
 void compute_node_brandes_betweenness_centrality(Word_t s);
 void compute_node_dependency(Word_t s, Pvoid_t L, Word_t ltail, Pvoid_t P,
@@ -154,6 +161,7 @@ load_graph(void)
       }
 
       JLI(pv, node_index, i);  *pv = num_nodes;
+      JLI(pv, index_node, num_nodes); *pv = i;
 
       ++num_nodes;
       pi = i;
@@ -217,7 +225,69 @@ dump_links(Word_t i, Word_t li)
     printf("%lu %lu\n", i, *pv);
   }
 }
+/* ====================================================================== */
 
+void
+dump_nodes_betweenness(char * filename)
+{
+  Word_t i, *n;
+  FILE * fp;
+
+  fp = fopen(filename,"w");
+  if (NULL == fp)
+    fprintf (stderr, "failed to open file:%s\n", filename);
+
+  i = 0;
+  fprintf(fp, "#node_id betweenness\n");
+  JLG(n, index_node, i);
+  while(NULL != n) {
+    fprintf (fp, "%lu %e\n",*n, node_centrality[i]);
+    JLG(n, index_node, ++i);
+  }
+}
+
+    /* ====================================================================== */
+void
+dump_links_betweenness(char * filename)
+{
+  Word_t i0, n0, li, *pv;
+  FILE * fp;
+
+  fp = fopen(filename,"w");
+  if (NULL == fp)
+    fprintf (stderr, "failed to open file:%s\n", filename);
+
+  fprintf(fp, "#node0 node1 betweenness\n");
+
+  i0 = 0;
+  JLF(pv, nodes, i0);
+  while (pv != NULL) {
+    dump_links_betweenness_helper(fp, i0, *pv);
+    JLN(pv, nodes, i0);
+  }
+}
+
+
+/* ====================================================================== */
+
+void
+dump_links_betweenness_helper(FILE * fp, Word_t n0, Word_t li)
+{
+  Word_t d, *n1, *pv;
+
+
+  JLG(pv, links, li);
+  d = *pv;
+
+  while (d > 0) {
+    --d;
+    ++li;
+    JLG(pv, links, li);
+    if (n0 < *pv) {
+      fprintf(fp, "%lu %lu %e\n", n0, *pv, edge_centrality[li]);
+    }
+  }
+}
 
 /* ====================================================================== */
 
@@ -447,9 +517,13 @@ void normalize_centrality(void)
 {
   double factor = (loose_normalization ? num_nodes * (num_nodes - 1)
 		   : (num_nodes - 1) * (num_nodes - 2) / 2.0);
+
   double *x = node_centrality;
   double *end = x + num_nodes;
   double d = 2.0 * factor;
+
+printf("num_nodes: %lu factor:%e\n",num_nodes, d); // debug
+return;
 
   while (x < end) {
     *x++ /= d;
@@ -558,18 +632,26 @@ int
 main(int argc, char *argv[])
 {
   int c;
+  int dump_betweenness_flag = false;
 
-  while ((c = getopt(argc, argv, "z")) != -1) {
+  while ((c = getopt(argc, argv, "zd")) != -1) {
     switch (c) {
     case 'z':
       loose_normalization = 1;
       break;
+    case 'd':
+      dump_betweenness_flag = true;
+      break;
 
     case '?':
+    case 'h':
     default:
-      fprintf(stderr, "Usage: betweenness [-z]\n"
+      fprintf(stderr, "Usage: betweenness [-?dhz]\n"
         "Options:\n"
-        "  -z to normalize betweenness with n(n-1) [NOT recommended]\n");
+	"  -h this message\n"
+	"  -d dump to betweenness_link.txt and betweenness_nodes.txt\n"
+        "  -z to normalize betweenness with n(n-1) [NOT recommended]\n"
+	);
       exit(1);
     }
   }
@@ -590,5 +672,9 @@ main(int argc, char *argv[])
   fill_array(edge_centrality, links_array_size, -1);
 
   compute_brandes_betweenness_centrality();
+  if (true == dump_betweenness_flag) {
+    dump_nodes_betweenness("betweenness_nodes.txt");
+    dump_links_betweenness("betweenness_links.txt");
+  }
   return 0;
 }

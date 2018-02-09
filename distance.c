@@ -28,37 +28,37 @@
 */
 
 #include <unistd.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <errno.h>
 #include <math.h>
-#include <sys/time.h>
 #include <Judy.h>
+
+#define false 0
+#define true  1
 
 Pvoid_t nodes = (Pvoid_t)NULL;
 Pvoid_t links = (Pvoid_t)NULL;
+Pvoid_t index_node = (Pvoid_t)NULL;
 
 Pvoid_t queue = (Pvoid_t)NULL;
 Pvoid_t visited = (Pvoid_t)NULL;  /* Judy1 */
 Pvoid_t distances = (Pvoid_t)NULL;
 Pvoid_t distance_dist = (Pvoid_t)NULL;
 
+Pvoid_t eccentricities = (Pvoid_t)NULL;
+Pvoid_t distance_sum = (Pvoid_t)NULL;
+
 unsigned long num_nodes, num_links;
 unsigned long long num_pairs;  /* C(n, 2) pairs of nodes */
-
-unsigned long progress_interval = 0;
-struct timeval start_time, end_time;
 
 /* ====================================================================== */
 
 void load_graph(void);
 void dump_graph(void);
 void dump_links(Word_t i, Word_t li);
+void dump_distance(char * filename);
 void compute_distance_metrics(void);
 unsigned long compute_node_distance_metrics(Word_t i0);
 void compute_distance_statistics(void);
-void print_duration(double s);
-double timeval_diff(const struct timeval *a, const struct timeval *b);
 
 
 /* ====================================================================== */
@@ -92,6 +92,7 @@ load_graph(void)
       ++num_nodes;
       pi = i;
       JLI(pv, nodes, i);  *pv = l0;
+      JLI(pv, index_node, num_nodes); *pv = i;
     }
 
     ++num_links;
@@ -150,6 +151,38 @@ dump_links(Word_t i, Word_t li)
   }
 }
 
+/* ====================================================================== */
+
+void 
+dump_distance(char * filename) 
+{
+  Word_t i, li, deg, n, dist_sum, eccen, *pv;
+  FILE * fp;
+
+
+  fp = fopen(filename,"w");
+  if (NULL == fp)
+    fprintf (stderr, "failed to open file:%s\n", filename);
+
+  printf("# storing distances in %s\n",filename);
+  i = 1;
+  fprintf(fp, "#node_id deg distance_avg eccentricity\n");
+  JLG(pv, index_node, i); 
+  while(NULL != pv) {
+    n = *pv;
+    JLG(pv, nodes, n);  
+    if (NULL != pv) {
+      li = *pv;
+      JLG(pv, links, li);  deg = (NULL != pv) ? *pv : -1;
+    }
+    JLG(pv, distance_sum, n); dist_sum = (NULL != pv) ? *pv : -1;
+    JLG(pv, eccentricities, n); eccen = (NULL != pv) ? *pv : -1;
+
+    fprintf (fp, "%lu %lu %lf %lu\n", n, deg, 
+	(1.0*dist_sum/(num_nodes-1)), eccen);
+    JLG(pv, index_node, ++i);
+  }
+}
 
 /* ====================================================================== */
 
@@ -172,13 +205,8 @@ compute_distance_metrics(void)
   unsigned long eccentricity;
   double eccentricity_sum=0.0; /* for calculating avg eccentricity */
   Word_t i, li, deg, *pv;
-  unsigned long done_nodes, report_wait;
-
-  done_nodes = 0;
-  report_wait = progress_interval;
-  if (progress_interval > 0) {
-    gettimeofday(&start_time, NULL);
-  }
+  unsigned long num_nodes_in_graph_center = 0;
+  unsigned long num_nodes_in_graph_periphery = 0;
 
   i = 0;
   JLF(pv, nodes, i);
@@ -203,10 +231,13 @@ compute_distance_metrics(void)
 	     graph_radius, eccentricity, i);
       graph_radius = eccentricity;
       min_deg_in_graph_center = deg;
+      num_nodes_in_graph_center = 1;
     }
-    else if (eccentricity == graph_radius &&
-	     (deg < min_deg_in_graph_center || min_deg_in_graph_center == 0)) {
-      min_deg_in_graph_center = deg;
+    else if (eccentricity == graph_radius) {
+      if ((deg < min_deg_in_graph_center || min_deg_in_graph_center == 0)) {
+        min_deg_in_graph_center = deg;
+      }
+      num_nodes_in_graph_center++;
     }
 
     if (eccentricity > graph_diameter) {
@@ -214,32 +245,16 @@ compute_distance_metrics(void)
 	     graph_diameter, eccentricity, i);
       graph_diameter = eccentricity;
       max_deg_in_graph_periphery = deg;
+      num_nodes_in_graph_periphery = 1;
     }
-    else if (eccentricity == graph_diameter &&
-	     deg > max_deg_in_graph_periphery) {
-      max_deg_in_graph_periphery = deg;
-    }
-
-    ++done_nodes;
-    if (--report_wait == 0 && progress_interval > 0) {
-      report_wait = progress_interval;
-      gettimeofday(&end_time, NULL);
-      { double delta = timeval_diff(&start_time, &end_time);
-	double eta = (num_nodes - done_nodes) * delta / done_nodes;
-	printf("... finished %lu nodes in %.3f seconds; eta =",
-	       done_nodes, delta);
-	print_duration(eta);
-	printf("\n");
+    else if (eccentricity == graph_diameter) {
+      if (deg > max_deg_in_graph_periphery) {
+        max_deg_in_graph_periphery = deg;
       }
+      num_nodes_in_graph_periphery++;
     }
 
     JLN(pv, nodes, i);
-  }
-
-  if (progress_interval > 0) {
-    gettimeofday(&end_time, NULL);
-    printf("... computed distance metrics in %.3f seconds\n",
-	   timeval_diff(&start_time, &end_time));
   }
 
   compute_distance_statistics();
@@ -249,6 +264,8 @@ compute_distance_metrics(void)
   printf("graph diameter = %lu\n", graph_diameter);
   printf("min degree in graph center = %lu\n", min_deg_in_graph_center);
   printf("max degree in graph periphery = %lu\n", max_deg_in_graph_periphery);
+  printf("num. nodes in graph center = %lu\n", num_nodes_in_graph_center);
+  printf("num. nodes in graph periphery = %lu\n", num_nodes_in_graph_periphery);
 }
 
 
@@ -263,9 +280,11 @@ compute_distance_metrics(void)
 unsigned long
 compute_node_distance_metrics(Word_t i0)
 {
-  Word_t qhead, qtail, i, i2, li, deg, dist, *pv, Rc_word;
+  Word_t n, qhead, qtail, i, i2, li, deg, dist, dist_sum, *pv, Rc_word;
   int Rc_int;
   unsigned long eccentricity=0;  /* zero is never a valid distance */
+
+  dist_sum = 0;
 
   qhead = qtail = 0;
   JLI(pv, queue, qtail);  *pv = i0;  ++qtail;
@@ -304,6 +323,11 @@ compute_node_distance_metrics(Word_t i0)
 	  eccentricity = dist + 1;
 	}
 
+	/* 
+	** Used to store the average distance
+	*/
+	dist_sum += dist + 1;
+
 	/*
 	** Because we represent undirected links with a pair of directed links,
 	** we need to ensure that we don't double count things.  We do this
@@ -322,6 +346,9 @@ compute_node_distance_metrics(Word_t i0)
       }
     }
   }
+
+  JLI(pv, eccentricities, i0); *pv = eccentricity;
+  JLI(pv, distance_sum, i0); *pv = dist_sum;
 
   return eccentricity;
 }
@@ -380,100 +407,37 @@ compute_distance_statistics(void)
 
 /* ====================================================================== */
 
-void print_duration(double s)
-{
-  double d, h, m;
-
-  d = h = m = 0.0;
-
-  if (s > 86400.0) {
-    d = floor(s / 86400.0);
-    s = fmod(s, 86400.0);
-  }
-
-  if (s > 3600.0) {
-    h = floor(s / 3600.0);
-    s = fmod(s, 3600.0);
-  }
-
-  if (s > 60.0) {
-    m = floor(s / 60.0);
-    s = fmod(s, 60.0);
-  }
-
-  if (d > 0.0) {
-    printf(" %.0f days", d);
-  }
-
-  printf(" %02.0f:%02.0f:%02.0f", h, m, s);
-}
-
-
-/* ====================================================================== */
-
-/* Returns b - a in seconds. */
-double timeval_diff(const struct timeval *a, const struct timeval *b)
-{
-  struct timeval delta;
-
-  delta.tv_sec = b->tv_sec - a->tv_sec;
-  delta.tv_usec = b->tv_usec - a->tv_usec;
-
-  if(delta.tv_usec < 0) {
-    delta.tv_sec--;
-    delta.tv_usec += 1000000;
-  }
-
-  return delta.tv_sec + delta.tv_usec / 1000000.0;
-}
-
-
-/* ====================================================================== */
-
 int
 main(int argc, char *argv[])
 {
+  int dump_distance_flag = false;
   int c;
-  char *endptr;
 
-  while ((c = getopt(argc, argv, "p:")) != -1) {
+  while ((c = getopt(argc, argv, "hd")) != -1) {
     switch (c) {
-    case 'p':
-      progress_interval = strtoul(optarg, &endptr, 10);
-      if (*optarg == '\0' || *endptr != '\0'
-	  || errno == EINVAL || errno == ERANGE) {
-	fprintf(stderr, "ERROR: invalid argument to -p: %s\n", optarg);
-	exit(1);
-      }
+    case 'd':
+      dump_distance_flag = true;
       break;
 
     case '?':
+    case 'h':
     default:
-      fprintf(stderr, "Usage: distance [-p <interval>]\n"
+      fprintf(stderr, "Usage: betweenness [-z]\n"
         "Options:\n"
-        "  -p print progress every N iterations\n");
+	"  -h this message\n"
+	"  -d dump to betweenness_link.txt and betweenness_nodes.txt\n"
+        "  -z to normalize betweenness with n(n-1) [NOT recommended]\n");
       exit(1);
     }
   }
-  argc -= optind;
-  argv += optind;
-
-  if (progress_interval > 0) {
-    gettimeofday(&start_time, NULL);
-  }
-
   load_graph();
-
-  if (progress_interval > 0) {
-    gettimeofday(&end_time, NULL);
-    printf("loaded graph in %.3f seconds\n",
-	   timeval_diff(&start_time, &end_time));
-  }
-
 #ifdef DEBUG
   dump_graph();
 #endif
-
   compute_distance_metrics();
+
+  if (true == dump_distance_flag) {
+    dump_distance("distance_nodes.txt");
+  }
   return 0;
 }

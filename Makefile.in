@@ -1,0 +1,18 @@
+LDFLAGS = @LDFLAGS@
+LDLIBS = @LIBS@
+CPPFLAGS = @CPPFLAGS@
+CXXFLAGS = @CXXFLAGS@ $(CPPFLAGS)
+CFLAGS = @CFLAGS@ $(CPPFLAGS)
+CC=@CC@
+CXX=@CXX@
+
+all: topology_stats distance components betweenness
+
+topology_stats: topology_stats.cpp
+
+distance: distance.c
+
+components: components.c
+
+betweenness: betweenness.c
+
